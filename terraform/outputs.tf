@@ -18,23 +18,23 @@ output "vcn_ocid" {
 }
 
 output "ca_ocid" {
-  description = "Private Root CA OCID (null until enable_https = true)."
+  description = "Private Root CA OCID — UNUSED private-CA fallback (null unless enable_private_ca = true). The live server cert is Let's Encrypt, not this."
   value       = try(oci_certificates_management_certificate_authority.root[0].id, null)
 }
 
 output "certificate_ocid" {
-  description = "Leaf TLS certificate OCID (null until enable_https = true)."
+  description = "Private-CA leaf cert OCID — UNUSED fallback (null unless enable_private_ca = true). The live LB cert is the imported LE cert in var.tls_server_certificate_id."
   value       = try(oci_certificates_management_certificate.leaf[0].id, null)
 }
 
-# Clients must trust the private CA. This pulls the CA chain to ca-bundle.pem,
-# which you then use as `curl --cacert ca-bundle.pem https://freeai.punkadillo.com/...`
-# or add to the OS/client trust store.
+# PRIVATE-CA FALLBACK ONLY (enable_private_ca = true). The live server cert is a
+# publicly-trusted Let's Encrypt cert, so clients need NO CA bundle for the server
+# side; access is gated by mTLS (a client cert) on 443 and/or the bearer token.
 output "ca_bundle_fetch_cmd" {
-  description = "Command to export the CA bundle clients need to trust the cert."
+  description = "Private-CA fallback: command to export the CA bundle clients would trust IF using the private CA. Not needed with the live LE cert."
   value = try(
     "oci certificates certificate-authority-bundle get --certificate-authority-id ${oci_certificates_management_certificate_authority.root[0].id} --query 'data.\"certificate-pem\"' --raw-output > ca-bundle.pem",
-    "(set enable_https = true and apply to create the CA first)"
+    "(private CA disabled — live cert is publicly-trusted Let's Encrypt; no CA bundle needed)"
   )
 }
 
@@ -50,12 +50,20 @@ output "observability_reminder" {
 
 output "next_steps" {
   value = <<-EOT
-    1. Point DNS:  A record  ${var.domain_name} -> ${try(oci_load_balancer_load_balancer.lb.ip_address_details[0].ip_address, "<lb-ip>")}
-    2. Smoke test (HTTP): curl http://<lb-ip>/api/ping   (expect 200)
-    3. For TLS: set enable_https = true and re-apply. Terraform creates the OCI
-       private CA + cert and the LB serves HTTPS on 443 (auto-renewed by OCI).
-    4. Export the CA bundle (see `terraform output ca_bundle_fetch_cmd`) and have
-       clients trust it: curl --cacert ca-bundle.pem https://${var.domain_name}/api/ping
-    5. SSH for debugging via OCI Bastion -> instance OCID ${oci_core_instance.app.id}.
+    DNS: A record  ${var.domain_name} -> ${try(oci_load_balancer_load_balancer.lb.ip_address_details[0].ip_address, "<lb-ip>")}
+
+    TLS is live: a publicly-trusted Let's Encrypt server cert (imported into the
+    Certificates service, var.tls_server_certificate_id) terminates on the LB.
+    Renewal is certbot + a deploy-hook that re-imports the new version (stable OCID).
+
+    Access paths (both also require the app bearer token):
+      - 443 : mTLS — clients must present a cert signed by the private client CA.
+              curl --cert client.pem --key client.key https://${var.domain_name}/v1/models
+              (a request with no client cert gets HTTP 400 from the LB — expected.)
+      - ${var.bearer_listener_port}: bearer-only, no client cert${var.enable_bearer_listener ? "" : " (set enable_bearer_listener = true)"}.
+              For clients that can't do mTLS, e.g. Cursor's custom OpenAI base URL:
+              https://${var.domain_name}:${var.bearer_listener_port}/v1
+
+    SSH for debugging via OCI Bastion -> instance OCID ${oci_core_instance.app.id}.
   EOT
 }
