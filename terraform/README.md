@@ -66,6 +66,26 @@ Then:
    ```
    Or add `ca-bundle.pem` to the client's OS/trust store once.
 
+### TLS in production: Let's Encrypt (publicly trusted)
+
+The OCI private CA above gives working TLS but **never a browser padlock** — OCI
+issues leaf certs at ~11 years and Safari/Chrome reject server certs > 398 days,
+and OCI won't let you set a shorter validity. So the live deployment uses a
+**publicly-trusted Let's Encrypt cert** imported onto the LB instead:
+
+1. DNS-01 issuance (DNS on Cloudflare): `certbot certonly --dns-cloudflare
+   --dns-cloudflare-credentials <token.ini> -d freeai.punkadillo.com`.
+2. Import to the LB as an LB-local cert + point the 443 listener at it:
+   `oci lb certificate create … --certificate-name letsencrypt-freeai …` then
+   `oci lb listener update … --ssl-certificate-name letsencrypt-freeai`.
+3. The listener (`loadbalancer.tf`) uses `certificate_name = var.tls_lb_certificate_name`
+   with `ignore_changes = [ssl_configuration]`, so 60-day renewals (certbot +
+   the `deploy-hook` that re-imports a freshly-named cert and repoints the
+   listener) don't show as drift or get reverted by `apply`.
+
+Result: real padlock on every device, no client-side CA bundle. The private-CA
+resources in `certificates.tf` remain as the non-public fallback.
+
 ## Enable observability (Phases 6/7)
 
 Set in `terraform.tfvars`:
@@ -104,14 +124,26 @@ of `terraform/`) so state lives in OCI, not your laptop.
 
 ## Notes & gotchas
 
-- **`enable_https` creates a Vault + key** (`certificates.tf`) to back the CA.
-  On `terraform destroy` (or flipping `enable_https` back to false), the Vault
-  and CA don't delete immediately — they enter OCI's mandatory 7–30 day
+- **A1 "Out of capacity"**: if the ARM pool is persistently full, set
+  `use_micro_fallback = true` + `instance_image_ocid_x86` to deploy on the AMD
+  Always-Free **E2.1.Micro** (a different pool). Note that pool's shape may only
+  be offered in *some* ADs (in this tenancy, only AD-3). Moving micro→A1 later
+  replaces the instance (fresh boot volume) — back up `/app/server/data` first.
+- **`enable_https` cert chain** (`certificates.tf`), learned the hard way:
+  - The CA key **must be HSM-protected** (`protection_mode = "HSM"`) — software
+    keys are rejected. HSM keys are still free in the DEFAULT vault.
+  - The CA signs via a **dynamic group + `use keys` policy**; without it the CA
+    provisions to `FAILED`. A `time_sleep` covers IAM propagation. (There is no
+    `certificate-authority` service principal — don't grant one.)
+  - Don't pin CA `validity` — it trips a 400 "Unable to process JSON input".
+  - A FAILED CA reserves its name until scheduled deletion completes; bump the
+    CA `name` suffix to retry sooner.
+- **Scheduled deletion**: the Vault, key, and CA don't delete immediately on
+  `destroy` / disabling `enable_https` — they enter OCI's mandatory 7–30 day
   *scheduled deletion*. Expected, not an error.
-- The CA needs the `Allow service certificate-authority to use keys` policy
-  (also in `certificates.tf`) to exist first. IAM is eventually consistent — if
-  the CA fails to create with a permission error on the first apply, just re-run
-  `terraform apply`.
+- **CA bundle**: clients trust the private CA via the cert from
+  `terraform output ca_bundle_fetch_cmd` (uses `oci certificates ...`, the data
+  plane — not `certificates-management`).
 
 ## Not yet codified (layer on with the same provider)
 

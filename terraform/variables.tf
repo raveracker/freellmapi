@@ -64,11 +64,33 @@ variable "instance_memory_gb" {
 variable "instance_image_ocid" {
   type        = string
   description = <<-EOT
-    OCID of a Canonical Ubuntu 22.04 *aarch64* image in your region. Find it:
+    OCID of a Canonical Ubuntu 22.04 *aarch64* image in your region (for the A1
+    ARM shape). Find it:
     oci compute image list --compartment-id <compartment> \
       --operating-system "Canonical Ubuntu" --operating-system-version "22.04" \
       --shape VM.Standard.A1.Flex --query 'data[0].id' --raw-output
   EOT
+}
+
+variable "use_micro_fallback" {
+  type        = bool
+  description = <<-EOT
+    false → A1.Flex ARM instance (instance_ocpus/instance_memory_gb).
+    true  → VM.Standard.E2.1.Micro (x86, fixed 1 OCPU / 1 GB) on the AMD
+            Always-Free pool — a different capacity pool, usually available when
+            A1 is "Out of capacity". The multi-arch image runs its amd64 leg.
+            Flip back to A1 later by setting this false and re-applying.
+  EOT
+  default     = false
+}
+
+variable "instance_image_ocid_x86" {
+  type        = string
+  description = <<-EOT
+    OCID of a Canonical Ubuntu 22.04 *x86_64* image (only used when
+    use_micro_fallback = true). Find it with --shape VM.Standard.E2.1.Micro.
+  EOT
+  default     = ""
 }
 
 # ---------------------------------------------------------------------------
@@ -133,6 +155,16 @@ variable "domain_name" {
   type        = string
   description = "FQDN the cert is issued for (CN + SAN)."
   default     = "freeai.punkadillo.com"
+}
+
+variable "tls_lb_certificate_name" {
+  type        = string
+  description = <<-EOT
+    Name of the LB-local TLS certificate the HTTPS listener uses. The Let's
+    Encrypt cert is imported under this name by certbot + the oci CLI; renewal
+    rotates it (and ssl_configuration is ignore_changes'd so apply won't revert).
+  EOT
+  default     = "letsencrypt-freeai"
 }
 
 variable "ca_common_name" {
