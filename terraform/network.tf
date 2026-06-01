@@ -96,6 +96,24 @@ resource "oci_core_network_security_group_security_rule" "lb_443" {
   }
 }
 
+# LB: allow the bearer-only listener's port inbound from the approved CIDRs.
+# Only created alongside the bearer listener (var.enable_bearer_listener).
+resource "oci_core_network_security_group_security_rule" "lb_bearer" {
+  for_each                  = var.enable_bearer_listener ? toset(var.lb_ingress_cidrs) : toset([])
+  network_security_group_id = oci_core_network_security_group.lb.id
+  direction                 = "INGRESS"
+  protocol                  = "6" # TCP
+  source                    = each.value
+  source_type               = "CIDR_BLOCK"
+
+  tcp_options {
+    destination_port_range {
+      min = var.bearer_listener_port
+      max = var.bearer_listener_port
+    }
+  }
+}
+
 # LB: allow egress to the app subnet on 3001 (health checks + proxying).
 resource "oci_core_network_security_group_security_rule" "lb_egress_app" {
   network_security_group_id = oci_core_network_security_group.lb.id
