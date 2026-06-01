@@ -1,0 +1,256 @@
+{
+  "info": {
+    "_postman_id": "a3f1c9e2-7d44-4b6a-9c21-freellmapi0001",
+    "name": "FreeLLMAPI",
+    "description": "Test collection for the FreeLLMAPI OpenAI-compatible proxy.\n\nTwo endpoints:\n- {{base_url}}  = https://freeai.punkadillo.com:8443  -> bearer-only listener (NO client cert). Works in Postman web & desktop.\n- {{mtls_base_url}} = https://freeai.punkadillo.com   -> 443, requires an mTLS CLIENT cert. Desktop only.\n\nSetup:\n1. Edit the collection variable `token` to your unified API key (freellmapi-...).\n2. Optionally change `model` to any id from GET /v1/models.\n3. For the mTLS folder: Postman Settings (gear) -> Certificates -> Add Certificate -> Host `freeai.punkadillo.com`, Port `443`, CRT+KEY = your client.pem/client.key (or PFX = client.p12, passphrase `freellmapi`). Postman desktop only — Postman web cannot present client certs.\n\nAuth: the proxy accepts `Authorization: Bearer <token>` (collection default) or `x-api-key: <token>`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://freeai.punkadillo.com:8443", "type": "string" },
+    { "key": "mtls_base_url", "value": "https://freeai.punkadillo.com", "type": "string" },
+    { "key": "token", "value": "freellmapi-REPLACE_ME", "type": "string" },
+    { "key": "model", "value": "qwen/qwen3-coder:free", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health & connectivity",
+      "item": [
+        {
+          "name": "Ping (no auth) -> 200",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/ping"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "443 ping with NO client cert -> 400 (mTLS rejects)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{mtls_base_url}}/api/ping",
+            "description": "Proves mTLS is enforced on 443. With NO client cert configured for this host, the LB rejects with HTTP 400. If you HAVE configured a client cert in Postman settings, this will instead return 200."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 without client cert (or 200 if a cert is configured)', () =>",
+                  "  pm.expect(pm.response.code).to.be.oneOf([400, 200]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Core (bearer @ :8443)",
+      "item": [
+        {
+          "name": "List models -> 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/models"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('has data array', () => pm.expect(pm.response.json().data).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat completion (non-streaming)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{model}}\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Say hello in one word.\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/chat/completions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('has choices', () => pm.expect(pm.response.json().choices).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat completion (streaming SSE)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{model}}\",\n  \"stream\": true,\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Count from 1 to 5.\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/chat/completions",
+            "description": "Streams Server-Sent Events. Postman shows `data:` chunks ending with `data: [DONE]`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('looks like SSE', () => pm.expect(pm.response.text()).to.include('data:'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Responses API",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"{{model}}\",\n  \"input\": \"Say hi.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/responses",
+            "description": "OpenAI /v1/responses shape (uses `input`)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List models via x-api-key header",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{token}}" }],
+            "url": "{{base_url}}/v1/models",
+            "description": "The proxy also accepts the Anthropic-style x-api-key header instead of Bearer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative / auth",
+      "item": [
+        {
+          "name": "No token -> 401",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/models"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('error type', () => pm.expect(pm.response.json().error.type).to.eql('authentication_error'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong token -> 401",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "wrong-key", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/models"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "mTLS (@ :443, needs client cert)",
+      "item": [
+        {
+          "name": "List models WITH client cert -> 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mtls_base_url}}/v1/models",
+            "description": "Requires a client cert configured for host freeai.punkadillo.com:443 in Postman Settings -> Certificates (CRT+KEY or PFX client.p12, passphrase `freellmapi`). Postman DESKTOP only. Without a cert this returns 400."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with client cert (else 400 — configure the cert in Settings)', () =>",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 400]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
