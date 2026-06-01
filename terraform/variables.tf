@@ -257,3 +257,9 @@ variable "enable_private_ca" {
   EOT
   default     = false
 }
+
+variable "enable_bastion_ssh" {
+  type        = bool
+  description = "Allow SSH (22) to the app instance from the private subnet, for OCI Bastion sessions."
+  default     = false
+}

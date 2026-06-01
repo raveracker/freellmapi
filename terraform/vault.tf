@@ -50,9 +50,11 @@ resource "oci_identity_policy" "instance_read_secret" {
   count          = var.enable_app_secret_vault ? 1 : 0
   compartment_id = var.compartment_ocid
   name           = "freellmapi-instance-read-secret"
-  description    = "Allow the app instance to read the ENCRYPTION_KEY secret"
+  description    = "App instance: read the ENCRYPTION_KEY secret; manage the LB TLS cert on renewal"
   statements = [
     "Allow dynamic-group ${oci_identity_dynamic_group.instance[0].name} to read secret-family in compartment id ${var.compartment_ocid}",
+    # so the instance-side certbot deploy-hook can update the imported LE cert version
+    "Allow dynamic-group ${oci_identity_dynamic_group.instance[0].name} to manage leaf-certificate-family in compartment id ${var.compartment_ocid}",
   ]
 }
 

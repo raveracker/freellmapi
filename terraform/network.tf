@@ -136,3 +136,19 @@ resource "oci_core_network_security_group_security_rule" "app_egress" {
   destination               = "0.0.0.0/0"
   destination_type          = "CIDR_BLOCK"
 }
+
+# SSH from the private subnet for OCI Bastion port-forwarding sessions.
+resource "oci_core_network_security_group_security_rule" "app_ssh_bastion" {
+  count                     = var.enable_bastion_ssh ? 1 : 0
+  network_security_group_id = oci_core_network_security_group.app.id
+  direction                 = "INGRESS"
+  protocol                  = "6"
+  source                    = oci_core_subnet.private.cidr_block
+  source_type               = "CIDR_BLOCK"
+  tcp_options {
+    destination_port_range {
+      min = 22
+      max = 22
+    }
+  }
+}
