@@ -42,11 +42,12 @@ resource "oci_core_instance" "app" {
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/cloud-init.sh", {
-      app_image            = var.app_image
-      encryption_key       = var.encryption_key
-      ghcr_username        = var.ghcr_username
-      ghcr_pull_token      = var.ghcr_pull_token
-      proxy_rate_limit_rpm = var.proxy_rate_limit_rpm
+      app_image                  = var.app_image
+      encryption_key             = var.encryption_key
+      encryption_key_secret_ocid = var.enable_app_secret_vault ? oci_vault_secret.encryption_key[0].id : ""
+      ghcr_username              = var.ghcr_username
+      ghcr_pull_token            = var.ghcr_pull_token
+      proxy_rate_limit_rpm       = var.proxy_rate_limit_rpm
     }))
   }
 
@@ -54,6 +55,11 @@ resource "oci_core_instance" "app" {
   # persistently fails, switch `availability_domain`, or set use_micro_fallback
   # to land on the AMD E2.1.Micro pool instead.
   lifecycle {
+    # Protect the RUNNING instance: changing cloud-init/user_data here would
+    # otherwise replace the instance and wipe its SQLite DB. New cloud-init takes
+    # effect only on a deliberate rebuild.
+    ignore_changes = [metadata]
+
     precondition {
       condition     = !var.use_micro_fallback || length(var.instance_image_ocid_x86) > 0
       error_message = "Set instance_image_ocid_x86 (an x86_64 Ubuntu image) when use_micro_fallback = true."

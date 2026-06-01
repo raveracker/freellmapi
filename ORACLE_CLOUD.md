@@ -163,32 +163,43 @@ Pattern with no app code changes: Vault protects the master `ENCRYPTION_KEY` (an
 
 **DNS:** in your `punkadillo.com` DNS host, add an **A record** `freeai` → `<LB public IP>`, TTL 300.
 
-**Certificate — OCI Certificates service (no Let's Encrypt):**
+**Certificate — Let's Encrypt server cert + mTLS client auth at the LB:**
 
-The `terraform/` stack does this for you when `enable_https = true`: it creates a
-private **Root CA** (backed by a free DEFAULT Vault key) and issues the LB's leaf
-cert from it. **OCI auto-renews the cert and auto-updates the LB** — no certbot,
-no 90-day cron. This is Always Free (5 CAs / 150 certs).
+> **History:** an earlier revision of this guide used an OCI **private Root CA**
+> with OCI auto-renewing the leaf — convenient, but **not publicly trusted**
+> (clients had to install a CA bundle, no browser padlock). The deployment has
+> since moved to a publicly-trusted **Let's Encrypt** server cert, plus **mTLS**
+> for access control. The private-CA scaffold still exists in
+> `terraform/certificates.tf` but is not the active path.
 
-Trade-off: a cert from an OCI private CA is **not publicly trusted**. Clients
-must trust the CA bundle once — which is fine here, since the endpoint is
-single-user and IP-locked (Phase 9) and you control the client:
+The live model, as wired in `terraform/loadbalancer.tf` (`enable_https = true`):
 
-```bash
-# export the CA chain clients need to trust
-oci certificates-management certificate-authority-bundle get \
-  --certificate-authority-id <ca-ocid> \
-  --query 'data."cert-chain-pem"' --raw-output > ca-bundle.pem
+- **Server cert (`var.tls_server_certificate_id`):** a Let's Encrypt cert
+  **imported into the OCI Certificates service**. The OCID is stable; renewal
+  updates the cert **version in place**, so the LB listener that references it
+  never changes — no Terraform drift, no `ignore_changes`. Publicly trusted, so
+  browsers show a real padlock.
+- **Client auth — mTLS (`var.tls_client_ca_bundle_id`):** the HTTPS listener sets
+  `verify_peer_certificate` against a private **client** CA bundle, so only
+  callers presenting a client cert signed by that CA can connect. This replaces
+  IP-allowlisting as the primary access gate — it's **IP-independent**, so the
+  endpoint works from any network without editing `nsg-lb` (Phase 9 ingress
+  scoping becomes optional defence-in-depth rather than the lock).
 
-curl --cacert ca-bundle.pem https://freeai.punkadillo.com/api/ping   # 200
-```
-
-(Console equivalent: **Identity & Security → Certificates → Certificate
-Authorities → Create CA**, then **Certificates → Create Certificate** issued by
-it, then select that cert on the LB's HTTPS listener.)
+**Renewal is certbot, not OCI-automatic.** Because the server cert is from Let's
+Encrypt, something has to run certbot every ~60 days and push the new version
+into the imported cert. A **deploy hook** does the push via instance principal —
+the instance's dynamic group has `manage leaf-certificate-family`
+(`terraform/vault.tf`), and the LB picks up the new current version with no LB
+change. See **Day-2 → Cert renewal** and
+[`terraform/scripts/oci-lb-cert-deploy-hook.sh`](./terraform/scripts/oci-lb-cert-deploy-hook.sh).
+Renewal can run wherever certbot lives (a workstation, or — via the Bastion
+handoff in [`terraform/scripts/bastion-session.sh`](./terraform/scripts/bastion-session.sh)
+— the always-on instance itself).
 
 After DNS propagates, `https://freeai.punkadillo.com/v1/models` with your bearer
-token (and `--cacert ca-bundle.pem`) should respond.
+token **and a client cert** (`curl --cert client.pem --key client.key`) should
+respond.
 
 ---
 
@@ -294,7 +305,7 @@ What's automatable vs. not:
 | VCN, subnets, gateways, route tables, NSGs | Confirming the email subscription (click the link) |
 | A1 instance + the entire app install via **cloud-init** `user_data` | A1 "Out of capacity" retries |
 | Load Balancer, backend set, listener | — |
-| **TLS: OCI private CA + auto-renewing cert** (Certificates service) | Distributing the CA bundle to clients (one-time) |
+| **TLS: Let's Encrypt server cert imported to the Certificates service + mTLS client auth** (`loadbalancer.tf`) | `certbot renew` + the deploy-hook push (`scripts/oci-lb-cert-deploy-hook.sh`); issuing/distributing client certs (one-time) |
 | Notifications topic + subscription, flow/LB logs, Monitoring alarms (`observability.tf`) | First DNS delegation (if moving nameservers) |
 | Vault + key + CA for TLS (`certificates.tf`) | Phase 7 usage-cron (bash on the instance, not infra) |
 | Budget + alert rule, quota policy | |
@@ -437,5 +448,5 @@ Then layer on the rest with the same provider:
 | Restart app (Docker path) | `sudo docker compose restart freellmapi` |
 | Update app (Docker path) | Automatic via Watchtower on each CI push; manual: `sudo docker compose pull && sudo docker compose up -d` |
 | App status / update (bare-metal path) | `pm2 status` · `cd ~/freellmapi && git pull && npm install && npm run build && pm2 restart freellmapi` |
-| Cert renewal | Automatic — OCI Certificates service renews the cert and updates the LB; nothing to run |
+| Cert renewal | `certbot renew` (Let's Encrypt, ~60-day cycle). A deploy hook (`terraform/scripts/oci-lb-cert-deploy-hook.sh`) imports the new version into the OCI cert via instance principal; the LB picks up the current version automatically. Verify: `sudo certbot renew --dry-run` |
 | Check free-tier headroom | Console → Limits, Quotas and Usage |

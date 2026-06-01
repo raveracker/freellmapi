@@ -159,12 +159,27 @@ variable "domain_name" {
 
 variable "tls_lb_certificate_name" {
   type        = string
-  description = <<-EOT
-    Name of the LB-local TLS certificate the HTTPS listener uses. The Let's
-    Encrypt cert is imported under this name by certbot + the oci CLI; renewal
-    rotates it (and ssl_configuration is ignore_changes'd so apply won't revert).
-  EOT
+  description = "Legacy: LB-local cert name (pre-mTLS). Unused now that the listener uses the cert-service model; kept for reference."
   default     = "letsencrypt-freeai"
+}
+
+variable "tls_server_certificate_id" {
+  type        = string
+  description = <<-EOT
+    OCID of the Certificate-service IMPORTED certificate (the Let's Encrypt
+    server cert). Created/renewed out-of-band via
+    `oci certs-mgmt certificate (create|update)-...-importing-config`; the OCID
+    is stable across renewals (only the version changes).
+  EOT
+}
+
+variable "tls_client_ca_bundle_id" {
+  type        = string
+  description = <<-EOT
+    OCID of the Certificate-service CA bundle holding the private CLIENT CA.
+    Clients must present a cert signed by it (mTLS). Created with
+    `oci certs-mgmt ca-bundle create`.
+  EOT
 }
 
 variable "ca_common_name" {
@@ -217,4 +232,34 @@ variable "log_retention_days" {
   type        = number
   description = "Retention for flow/LB logs (30–180). Logging free tier is 10 GB/mo ingestion."
   default     = 30
+}
+
+# ---------------------------------------------------------------------------
+# App-secret Vault (Phase 4) and private-CA toggle
+# ---------------------------------------------------------------------------
+
+variable "enable_app_secret_vault" {
+  type        = bool
+  description = <<-EOT
+    Store ENCRYPTION_KEY in an OCI Vault secret and let the instance read it at
+    boot via instance principal (dynamic group + policy), instead of relying on
+    the cloud-init-written .env. Provider keys stay encrypted in the app DB.
+  EOT
+  default     = false
+}
+
+variable "enable_private_ca" {
+  type        = bool
+  description = <<-EOT
+    The OCI private-CA TLS chain in certificates.tf. Superseded by the public
+    Let's Encrypt cert + mTLS on the LB, so default false (not created). Was
+    previously gated on enable_https.
+  EOT
+  default     = false
+}
+
+variable "enable_bastion_ssh" {
+  type        = bool
+  description = "Allow SSH (22) to the app instance from the private subnet, for OCI Bastion sessions."
+  default     = false
 }

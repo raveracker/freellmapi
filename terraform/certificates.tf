@@ -15,7 +15,7 @@
 
 # DEFAULT (free) vault to hold the CA signing key.
 resource "oci_kms_vault" "cert" {
-  count          = var.enable_https ? 1 : 0
+  count          = var.enable_private_ca ? 1 : 0
   compartment_id = var.compartment_ocid
   display_name   = "freellmapi-vault"
   vault_type     = "DEFAULT"
@@ -25,7 +25,7 @@ resource "oci_kms_vault" "cert" {
 # Authorities REQUIRE an HSM key; HSM keys are free in the DEFAULT vault (only a
 # dedicated Virtual Private Vault is paid).
 resource "oci_kms_key" "ca" {
-  count               = var.enable_https ? 1 : 0
+  count               = var.enable_private_ca ? 1 : 0
   compartment_id      = var.compartment_ocid
   display_name        = "freellmapi-ca-key"
   management_endpoint = oci_kms_vault.cert[0].management_endpoint
@@ -42,7 +42,7 @@ resource "oci_kms_key" "ca" {
 # `use keys` policy. Without it the CA provisions to FAILED. Dynamic groups must
 # live in the tenancy (root) compartment.
 resource "oci_identity_dynamic_group" "ca" {
-  count          = var.enable_https ? 1 : 0
+  count          = var.enable_private_ca ? 1 : 0
   compartment_id = var.tenancy_ocid
   name           = "freellmapi-ca-dg"
   description    = "FreeLLMAPI certificate authorities (use the Vault signing key)"
@@ -50,7 +50,7 @@ resource "oci_identity_dynamic_group" "ca" {
 }
 
 resource "oci_identity_policy" "ca_use_key" {
-  count          = var.enable_https ? 1 : 0
+  count          = var.enable_private_ca ? 1 : 0
   compartment_id = var.compartment_ocid
   name           = "freellmapi-ca-use-key"
   description    = "Allow the CA dynamic group to use the Vault signing key"
@@ -62,13 +62,13 @@ resource "oci_identity_policy" "ca_use_key" {
 # IAM is eventually consistent — give the dynamic group + policy time to
 # propagate before the CA tries to use the key (else it provisions to FAILED).
 resource "time_sleep" "iam_propagation" {
-  count           = var.enable_https ? 1 : 0
+  count           = var.enable_private_ca ? 1 : 0
   depends_on      = [oci_identity_policy.ca_use_key, oci_identity_dynamic_group.ca]
   create_duration = "90s"
 }
 
 resource "oci_certificates_management_certificate_authority" "root" {
-  count          = var.enable_https ? 1 : 0
+  count          = var.enable_private_ca ? 1 : 0
   compartment_id = var.compartment_ocid
   # Unique name: the previous failed CA holds "freellmapi-root-ca" until its
   # scheduled deletion. Bump the suffix if a future attempt also fails.
@@ -98,7 +98,7 @@ resource "oci_certificates_management_certificate_authority" "root" {
 # Leaf TLS cert for the domain. No explicit validity → OCI's default lifetime
 # with automatic renewal; the LB association picks up renewed versions.
 resource "oci_certificates_management_certificate" "leaf" {
-  count          = var.enable_https ? 1 : 0
+  count          = var.enable_private_ca ? 1 : 0
   compartment_id = var.compartment_ocid
   name           = "freellmapi-tls"
 
