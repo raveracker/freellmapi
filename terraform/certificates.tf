@@ -86,6 +86,12 @@ resource "oci_certificates_management_certificate_authority" "root" {
     # time_of_validity_not_after tripped a 400 "Unable to process JSON input".
   }
 
+  # NOTE: a leaf_certificate_max_validity_duration rule (to cap leaf certs under
+  # the browser 398-day limit) can only be set BEFORE any longer cert is issued —
+  # OCI rejects a cap shorter than an already-active cert. Since OCI also won't
+  # let you set a short per-cert validity, getting a browser-acceptable leaf from
+  # this CA means creating the CA fresh with the rule (new root → re-trust on
+  # every client). For a real padlock without that, use a publicly-trusted cert.
   depends_on = [time_sleep.iam_propagation]
 }
 
@@ -111,5 +117,9 @@ resource "oci_certificates_management_certificate" "leaf" {
       type  = "DNS"
       value = var.domain_name
     }
+    # Per-cert `validity` here fails with 400 "Unable to process JSON input"
+    # (OCI limitation). OCI issues this leaf at ~11 years; browsers reject server
+    # certs > 398 days, so this private-CA cert works for curl/SDK (with the CA
+    # bundle) but never shows a browser padlock. See the CA note above.
   }
 }

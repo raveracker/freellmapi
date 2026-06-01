@@ -43,10 +43,12 @@ resource "oci_load_balancer_backend" "be" {
   weight           = 1
 }
 
-# HTTPS listener — TLS terminates here using the OCI Certificates-service cert
-# from certificates.tf; the instance stays plain HTTP on 3001. OCI auto-renews
-# the cert and the LB picks up the new version (only one certificate_ids entry
-# is allowed).
+# HTTPS listener — TLS terminates here; the instance stays plain HTTP on 3001.
+# The cert is a Let's Encrypt LB-local certificate (publicly trusted → browser
+# padlock), created and ROTATED out-of-band by certbot + the oci CLI on renewal.
+# ssl_configuration is therefore ignored: renewal swaps the cert name, and we
+# don't want `apply` to revert it. (The private-CA resources in certificates.tf
+# are no longer wired to the listener; kept only as the non-public fallback.)
 resource "oci_load_balancer_listener" "https" {
   count                    = var.enable_https ? 1 : 0
   load_balancer_id         = oci_load_balancer_load_balancer.lb.id
@@ -56,8 +58,12 @@ resource "oci_load_balancer_listener" "https" {
   protocol                 = "HTTP"
 
   ssl_configuration {
-    certificate_ids         = [oci_certificates_management_certificate.leaf[0].id]
+    certificate_name        = var.tls_lb_certificate_name
     verify_peer_certificate = false
+  }
+
+  lifecycle {
+    ignore_changes = [ssl_configuration]
   }
 }
 

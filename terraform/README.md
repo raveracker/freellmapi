@@ -66,6 +66,26 @@ Then:
    ```
    Or add `ca-bundle.pem` to the client's OS/trust store once.
 
+### TLS in production: Let's Encrypt (publicly trusted)
+
+The OCI private CA above gives working TLS but **never a browser padlock** — OCI
+issues leaf certs at ~11 years and Safari/Chrome reject server certs > 398 days,
+and OCI won't let you set a shorter validity. So the live deployment uses a
+**publicly-trusted Let's Encrypt cert** imported onto the LB instead:
+
+1. DNS-01 issuance (DNS on Cloudflare): `certbot certonly --dns-cloudflare
+   --dns-cloudflare-credentials <token.ini> -d freeai.punkadillo.com`.
+2. Import to the LB as an LB-local cert + point the 443 listener at it:
+   `oci lb certificate create … --certificate-name letsencrypt-freeai …` then
+   `oci lb listener update … --ssl-certificate-name letsencrypt-freeai`.
+3. The listener (`loadbalancer.tf`) uses `certificate_name = var.tls_lb_certificate_name`
+   with `ignore_changes = [ssl_configuration]`, so 60-day renewals (certbot +
+   the `deploy-hook` that re-imports a freshly-named cert and repoints the
+   listener) don't show as drift or get reverted by `apply`.
+
+Result: real padlock on every device, no client-side CA bundle. The private-CA
+resources in `certificates.tf` remain as the non-public fallback.
+
 ## Enable observability (Phases 6/7)
 
 Set in `terraform.tfvars`:

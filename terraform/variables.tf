@@ -157,6 +157,16 @@ variable "domain_name" {
   default     = "freeai.punkadillo.com"
 }
 
+variable "tls_lb_certificate_name" {
+  type        = string
+  description = <<-EOT
+    Name of the LB-local TLS certificate the HTTPS listener uses. The Let's
+    Encrypt cert is imported under this name by certbot + the oci CLI; renewal
+    rotates it (and ssl_configuration is ignore_changes'd so apply won't revert).
+  EOT
+  default     = "letsencrypt-freeai"
+}
+
 variable "ca_common_name" {
   type        = string
   description = "Common name shown on the private Root CA."
