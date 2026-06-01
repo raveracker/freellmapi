@@ -36,7 +36,7 @@ OCI_BIN="$(command -v oci || echo /root/bin/oci)"
   --certificate-pem "$(cat "$LINEAGE/cert.pem")" \
   --cert-chain-pem  "$(cat "$LINEAGE/chain.pem")" \
   --private-key-pem "$(cat "$LINEAGE/privkey.pem")" \
-  --force
+  --wait-for-state ACTIVE
 
 logger -t oci-lb-cert "pushed renewed $DOMAIN cert version to $CERT_OCID"
 echo "OK: new version imported for $CERT_OCID — verify it is CURRENT in the console;"
