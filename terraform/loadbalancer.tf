@@ -68,6 +68,25 @@ resource "oci_load_balancer_listener" "https" {
   }
 }
 
+# Second HTTPS listener on a separate port (default 8443), same backend + server
+# cert but NO mTLS — bearer token is the only gate. OCI scopes SSL/mTLS config
+# per-listener, and a listener is bound to a port, so a distinct port is the
+# supported way to run mTLS and non-mTLS side by side. For clients that can't
+# present a client cert (e.g. Cursor): https://<domain>:<port>/v1
+resource "oci_load_balancer_listener" "https_bearer" {
+  count                    = var.enable_https && var.enable_bearer_listener ? 1 : 0
+  load_balancer_id         = oci_load_balancer_load_balancer.lb.id
+  name                     = "freellmapi-https-bearer"
+  default_backend_set_name = oci_load_balancer_backend_set.bs.name
+  port                     = var.bearer_listener_port
+  protocol                 = "HTTP"
+
+  ssl_configuration {
+    certificate_ids         = [var.tls_server_certificate_id]
+    verify_peer_certificate = false
+  }
+}
+
 # Plain HTTP listener on 443 for the initial smoke test (before a cert exists).
 resource "oci_load_balancer_listener" "http" {
   count                    = var.enable_https ? 0 : 1

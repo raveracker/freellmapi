@@ -182,6 +182,24 @@ variable "tls_client_ca_bundle_id" {
   EOT
 }
 
+variable "enable_bearer_listener" {
+  type        = bool
+  description = <<-EOT
+    Add a SECOND HTTPS listener (bearer_listener_port, default 8443) that serves
+    the same backend + server cert but WITHOUT mTLS — the bearer token is the
+    only gate. For clients that can't present a client cert (e.g. Cursor's custom
+    OpenAI base URL). The mTLS listener on 443 is unaffected. Only takes effect
+    when enable_https = true.
+  EOT
+  default     = false
+}
+
+variable "bearer_listener_port" {
+  type        = number
+  description = "Port for the no-mTLS bearer-only listener (see enable_bearer_listener)."
+  default     = 8443
+}
+
 variable "ca_common_name" {
   type        = string
   description = "Common name shown on the private Root CA."
