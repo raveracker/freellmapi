@@ -169,3 +169,18 @@ of `terraform/`) so state lives in OCI, not your laptop.
   `oci_limits_quota` (you set these up manually).
 - **Phase 7 usage-cron** — the daily Usage-API check is a bash script on the
   instance, not infrastructure.
+
+## Remote state + app-secret Vault (post-deploy hardening)
+
+- **Remote Terraform state** (`versions.tf`): an OCI Object Storage bucket via the
+  S3-compatible API. Creds are an OCI **Customer Secret Key** supplied as
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars (never committed) — e.g.
+  `source ~/.secrets/freellmapi-tfstate-s3.env && tofu plan`.
+- **App-secret Vault** (`vault.tf`, `enable_app_secret_vault`): stores
+  `ENCRYPTION_KEY` in a Vault secret; the instance reads it at boot via instance
+  principal (dynamic group + `read secret-family` policy). `cloud-init.sh` fetches
+  it when `encryption_key_secret_ocid` is set. The instance has
+  `ignore_changes = [metadata]` so cloud-init edits don't replace the running box.
+- **Private CA** (`certificates.tf`) is now gated on `enable_private_ca` (default
+  **false**) — superseded by the Let's Encrypt cert + mTLS. Disabling it detaches
+  cleanly; the OCI resources scheduled-delete on their own.

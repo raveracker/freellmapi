@@ -233,3 +233,27 @@ variable "log_retention_days" {
   description = "Retention for flow/LB logs (30–180). Logging free tier is 10 GB/mo ingestion."
   default     = 30
 }
+
+# ---------------------------------------------------------------------------
+# App-secret Vault (Phase 4) and private-CA toggle
+# ---------------------------------------------------------------------------
+
+variable "enable_app_secret_vault" {
+  type        = bool
+  description = <<-EOT
+    Store ENCRYPTION_KEY in an OCI Vault secret and let the instance read it at
+    boot via instance principal (dynamic group + policy), instead of relying on
+    the cloud-init-written .env. Provider keys stay encrypted in the app DB.
+  EOT
+  default     = false
+}
+
+variable "enable_private_ca" {
+  type        = bool
+  description = <<-EOT
+    The OCI private-CA TLS chain in certificates.tf. Superseded by the public
+    Let's Encrypt cert + mTLS on the LB, so default false (not created). Was
+    previously gated on enable_https.
+  EOT
+  default     = false
+}

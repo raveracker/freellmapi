@@ -31,8 +31,22 @@ if [ -n "${ghcr_pull_token}" ]; then
 fi
 
 # --- App environment ----------------------------------------------------------
+# If a Vault secret OCID is provided, fetch ENCRYPTION_KEY from Vault via the
+# instance principal (Phase 4) instead of baking it in. Otherwise use the value
+# templated in from tfvars.
+ENC_KEY="${encryption_key}"
+SECRET_OCID="${encryption_key_secret_ocid}"
+if [ -n "$SECRET_OCID" ]; then
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults >/dev/null 2>&1 || true
+  OCI_BIN="$(command -v oci || echo /root/bin/oci)"
+  FETCHED="$("$OCI_BIN" secrets secret-bundle get --auth instance_principal \
+    --secret-id "$SECRET_OCID" \
+    --query 'data."secret-bundle-content".content' --raw-output 2>/dev/null | base64 -d || true)"
+  [ -n "$FETCHED" ] && ENC_KEY="$FETCHED"
+fi
+
 cat > "$APP_DIR/.env" <<ENV
-ENCRYPTION_KEY=${encryption_key}
+ENCRYPTION_KEY=$ENC_KEY
 PORT=3001
 HOST_BIND=0.0.0.0
 PROXY_RATE_LIMIT_RPM=${proxy_rate_limit_rpm}
