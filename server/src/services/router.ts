@@ -1,7 +1,7 @@
 import { getDb, getSetting, setSetting } from '../db/index.js';
 import { getProvider, resolveProvider } from '../providers/index.js';
 import { decrypt } from '../lib/crypto.js';
-import { canMakeRequest, canUseTokens, isOnCooldown } from './ratelimit.js';
+import { canMakeRequest, canUseTokens, isOnCooldown, canUseProvider } from './ratelimit.js';
 import {
   BANDIT_PRESETS, DEFAULT_STRATEGY, type RoutingStrategy, type RoutingWeights,
   reliabilityPosterior, expectedReliability, sampleBeta,
@@ -38,6 +38,7 @@ interface ChainRow {
   tpm_limit: number | null;
   tpd_limit: number | null;
   supports_vision: number;
+  context_window: number | null;
 }
 
 export interface RouteResult {
@@ -351,7 +352,8 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
-           m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision
+           m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.context_window
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
     WHERE fc.enabled = 1
@@ -372,6 +374,17 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     // Vision requests skip text-only models — including a sticky/preferred one,
     // which is correct: don't pin an image turn to a model that can't see it.
     if (requireVision && !entry.supports_vision) continue;
+
+    // Context-aware routing: skip a model whose context window can't hold the
+    // request, so a large prompt never selects a small-context model and burns
+    // a failover hop on a 413 "request too large" (#167). Only enforced when we
+    // know the model's window; estimatedTokens already includes the reserved
+    // output (max_tokens), so this is the total-context check the model must
+    // satisfy. A 413 that slips through is still retryable downstream, and the
+    // failed model is put on cooldown — so this is a fast-path, not the only
+    // guard. If every model is too small, the loop falls through and the caller
+    // gets the normal "all models exhausted" error rather than a wasted sweep.
+    if (entry.context_window != null && estimatedTokens > entry.context_window) continue;
 
     // Check if we have a provider for this platform
     const provider = getProvider(entry.platform as any);
@@ -405,6 +418,11 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
 
       // Check cooldown (from previous 429s)
       if (isOnCooldown(entry.platform, entry.model_id, key.id)) continue;
+
+      // Provider-wide daily request cap (#162): providers like OpenRouter cap
+      // total requests/day across ALL their models for the account, not per
+      // model — skip every model on this provider once that key hits the cap.
+      if (!canUseProvider(entry.platform, key.id)) continue;
 
       if (!canMakeRequest(entry.platform, entry.model_id, key.id, limits)) continue;
       if (!canUseTokens(entry.platform, entry.model_id, key.id, estimatedTokens, limits)) continue;
@@ -484,7 +502,8 @@ export function getRoutingScores(): { strategy: RoutingStrategy; weights: Routin
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.size_label, m.monthly_token_budget,
-           m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision
+           m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
+           m.context_window
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
     WHERE m.enabled = 1
